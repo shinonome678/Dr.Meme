@@ -7,6 +7,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from backends import BackendError, ImageNotFoundError
 from database import DuplicateMemeError, Meme, match_type_label, validate_match_type
 from image_storage import ImageDownloadError, UnsupportedImageError
 from permissions import can_manage_memes, permission_denied_message
@@ -88,12 +89,8 @@ class MemeCommands(commands.Cog):
         )
 
     @property
-    def db(self):
-        return self.bot.db
-
-    @property
-    def storage(self):
-        return self.bot.storage
+    def backend(self):
+        return self.bot.backend
 
     @property
     def settings(self):
@@ -143,35 +140,22 @@ class MemeCommands(commands.Cog):
             await send_ephemeral(interaction, "判定方法は partial または exact を指定してください。")
             return None
 
-        if not self.storage.is_supported_attachment(attachment):
+        if not self.backend.is_supported_attachment(attachment):
             await send_ephemeral(
                 interaction,
                 "対応している画像形式は jpg / jpeg / png / webp / gif です。",
             )
             return None
 
-        if self.db.duplicate_exists(
-            guild_id=guild_id,
-            keyword=normalized_keyword,
-            match_type=normalized_match_type,
-        ):
-            await send_ephemeral(
-                interaction,
-                "同じキーワードと判定方法のミームが既に登録されています。",
-            )
-            return None
-
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True, thinking=True)
 
-        relative_path: str | None = None
         try:
-            relative_path = await self.storage.save_attachment(attachment)
-            meme = self.db.add_meme(
+            meme = await self.backend.add_meme_with_attachment(
                 guild_id=guild_id,
                 keyword=normalized_keyword,
                 match_type=normalized_match_type,
-                image_path=relative_path,
+                attachment=attachment,
                 created_by=interaction.user.id,
             )
         except UnsupportedImageError:
@@ -187,16 +171,19 @@ class MemeCommands(commands.Cog):
             )
             return None
         except DuplicateMemeError:
-            if relative_path is not None:
-                self.storage.delete_image(relative_path)
             await interaction.followup.send(
                 "同じキーワードと判定方法のミームが既に登録されています。",
                 ephemeral=True,
             )
             return None
+        except BackendError:
+            LOGGER.exception("Backend failed to register meme")
+            await interaction.followup.send(
+                "ミーム保存先の処理に失敗しました。設定やログを確認してください。",
+                ephemeral=True,
+            )
+            return None
         except Exception:
-            if relative_path is not None:
-                self.storage.delete_image(relative_path)
             LOGGER.exception("Failed to register meme")
             await interaction.followup.send(
                 "ミームの登録に失敗しました。管理者にログを確認してもらってください。",
@@ -251,14 +238,12 @@ class MemeCommands(commands.Cog):
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True, thinking=True)
 
-        meme = self.db.delete_meme(guild_id=guild_id, meme_id=meme_id)
+        meme = await self.backend.delete_meme(guild_id=guild_id, meme_id=meme_id)
         if meme is None:
             await interaction.followup.send("指定されたIDのミームは見つかりません。", ephemeral=True)
             return
 
-        deleted = self.storage.delete_image(meme.image_path)
-        suffix = "" if deleted else "（画像ファイルは既に存在しませんでした）"
-        await interaction.followup.send(f"ID {meme.id} のミームを削除しました。{suffix}", ephemeral=True)
+        await interaction.followup.send(f"ID {meme.id} のミームを削除しました。", ephemeral=True)
 
     @meme.command(name="list", description="このサーバーのミーム一覧を表示します。")
     @app_commands.describe(page="表示するページ番号")
@@ -268,12 +253,12 @@ class MemeCommands(commands.Cog):
             return
 
         page = max(page, 1)
-        total = self.db.count_memes(guild_id=guild_id)
+        total = await self.backend.count_memes(guild_id=guild_id)
         max_page = max(1, math.ceil(total / PAGE_SIZE))
         if page > max_page:
             page = max_page
 
-        memes = self.db.list_memes(
+        memes = await self.backend.list_memes(
             guild_id=guild_id,
             limit=PAGE_SIZE,
             offset=(page - 1) * PAGE_SIZE,
@@ -303,14 +288,19 @@ class MemeCommands(commands.Cog):
         if guild_id is None:
             return
 
-        meme = self.db.get_meme(guild_id=guild_id, meme_id=meme_id)
+        meme = await self.backend.get_meme(guild_id=guild_id, meme_id=meme_id)
         if meme is None:
             await send_ephemeral(interaction, "指定されたIDのミームは見つかりません。")
             return
 
-        image_path = self.storage.path_for(meme.image_path)
-        if not image_path.is_file():
+        try:
+            file = await self.backend.to_discord_file(meme)
+        except ImageNotFoundError:
             await send_ephemeral(interaction, "登録画像ファイルが見つかりません。")
+            return
+        except BackendError:
+            LOGGER.exception("Failed to read meme image")
+            await send_ephemeral(interaction, "登録画像の読み込みに失敗しました。")
             return
 
         embed = discord.Embed(
@@ -323,8 +313,7 @@ class MemeCommands(commands.Cog):
         embed.add_field(name="発動回数", value=str(meme.trigger_count), inline=True)
         embed.add_field(name="登録者", value=f"<@{meme.created_by}>", inline=True)
         embed.add_field(name="登録日時", value=meme.created_at, inline=True)
-        embed.set_image(url=f"attachment://{image_path.name}")
-        file = discord.File(image_path, filename=image_path.name)
+        embed.set_image(url=f"attachment://{file.filename}")
 
         if interaction.response.is_done():
             await interaction.followup.send(embed=embed, file=file, ephemeral=True)
@@ -367,7 +356,7 @@ class MemeCommands(commands.Cog):
         assert guild_id is not None
 
         try:
-            updated = self.db.update_meme(
+            updated = await self.backend.update_meme(
                 guild_id=guild_id,
                 meme_id=meme_id,
                 keyword=next_keyword,
@@ -415,7 +404,7 @@ class MemeCommands(commands.Cog):
         guild_id = interaction.guild_id
         assert guild_id is not None
 
-        meme = self.db.set_enabled(guild_id=guild_id, meme_id=meme_id, enabled=enabled)
+        meme = await self.backend.set_enabled(guild_id=guild_id, meme_id=meme_id, enabled=enabled)
         if meme is None:
             await send_ephemeral(interaction, "指定されたIDのミームは見つかりません。")
             return
@@ -431,7 +420,7 @@ class MemeCommands(commands.Cog):
         if not await self._ensure_can_manage(interaction):
             return
 
-        attachment = self.storage.first_supported_attachment(message.attachments)
+        attachment = self.backend.first_supported_attachment(message.attachments)
         if attachment is None:
             await send_ephemeral(interaction, "このメッセージには登録可能な画像がありません。")
             return

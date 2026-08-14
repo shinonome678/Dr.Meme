@@ -6,9 +6,8 @@ import logging
 import discord
 from discord.ext import commands
 
+from backends import create_backend
 from config import Settings, load_settings
-from database import MemeDatabase
-from image_storage import ImageStorage
 
 
 class MemeBot(commands.Bot):
@@ -20,15 +19,10 @@ class MemeBot(commands.Bot):
 
         super().__init__(command_prefix=commands.when_mentioned, intents=intents)
         self.settings = settings
-        self.db = MemeDatabase(settings.db_path)
-        self.storage = ImageStorage(
-            data_dir=settings.data_dir,
-            images_dir=settings.images_dir,
-        )
+        self.backend = create_backend(settings)
 
     async def setup_hook(self) -> None:
-        self.db.initialize()
-        self.storage.initialize()
+        await self.backend.initialize()
 
         await self.load_extension("cogs.meme_commands")
         await self.load_extension("cogs.meme_listener")
@@ -54,6 +48,10 @@ class MemeBot(commands.Bot):
             logging.info("Bot is ready.")
             return
         logging.info("Logged in as %s (ID: %s)", user, user.id)
+
+    async def close(self) -> None:
+        await self.backend.close()
+        await super().close()
 
 
 async def main() -> None:

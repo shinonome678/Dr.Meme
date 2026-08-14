@@ -33,6 +33,7 @@ def _parse_int(value: str | None, *, default: int | None = None) -> int | None:
 class Settings:
     discord_token: str | None
     test_guild_id: int | None
+    backend: str
     meme_editor_role: str
     allow_everyone_to_edit: bool
     meme_cooldown_seconds: int
@@ -40,6 +41,9 @@ class Settings:
     data_dir: Path
     images_dir: Path
     db_path: Path
+    supabase_url: str | None
+    supabase_service_role_key: str | None
+    supabase_bucket: str
 
 
 def load_settings() -> Settings:
@@ -59,6 +63,7 @@ def load_settings() -> Settings:
     return Settings(
         discord_token=os.getenv("DISCORD_TOKEN"),
         test_guild_id=_parse_int(os.getenv("TEST_GUILD_ID")),
+        backend=os.getenv("BACKEND", "local").strip().lower(),
         meme_editor_role=os.getenv("MEME_EDITOR_ROLE", DEFAULT_MEME_EDITOR_ROLE),
         allow_everyone_to_edit=_parse_bool(
             os.getenv("ALLOW_EVERYONE_TO_EDIT"),
@@ -72,4 +77,7 @@ def load_settings() -> Settings:
         data_dir=data_dir,
         images_dir=data_dir / "images",
         db_path=data_dir / "memes.db",
+        supabase_url=os.getenv("SUPABASE_URL"),
+        supabase_service_role_key=os.getenv("SUPABASE_SERVICE_ROLE_KEY"),
+        supabase_bucket=os.getenv("SUPABASE_BUCKET", "memes"),
     )
