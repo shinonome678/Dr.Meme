@@ -8,9 +8,7 @@ from dotenv import load_dotenv
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
-IMAGES_DIR = DATA_DIR / "images"
-DB_PATH = DATA_DIR / "memes.db"
+DEFAULT_DATA_DIR = BASE_DIR / "data"
 
 DEFAULT_MEME_EDITOR_ROLE = "ミーム編集者"
 DEFAULT_COOLDOWN_SECONDS = 10
@@ -47,6 +45,10 @@ class Settings:
 def load_settings() -> Settings:
     load_dotenv(BASE_DIR / ".env")
 
+    data_dir = Path(os.getenv("DATA_DIR", DEFAULT_DATA_DIR)).expanduser()
+    if not data_dir.is_absolute():
+        data_dir = BASE_DIR / data_dir
+
     cooldown = _parse_int(
         os.getenv("MEME_COOLDOWN_SECONDS"),
         default=DEFAULT_COOLDOWN_SECONDS,
@@ -67,7 +69,7 @@ def load_settings() -> Settings:
             os.getenv("SYNC_GLOBAL_COMMANDS"),
             default=True,
         ),
-        data_dir=DATA_DIR,
-        images_dir=IMAGES_DIR,
-        db_path=DB_PATH,
+        data_dir=data_dir,
+        images_dir=data_dir / "images",
+        db_path=data_dir / "memes.db",
     )
