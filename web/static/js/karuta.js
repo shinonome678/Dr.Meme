@@ -73,8 +73,9 @@ async function handleMessage(message) {
     return;
   }
   if (message.type === "round_started") {
-    activeRoundNo = message.round_no;
+    activeRoundNo = Number(message.round_no || 0);
     actedRoundNo = 0;
+    keywordStartedAt = 0;
     inputEnabled = false;
     statusLine.textContent = `第${message.round_no}戦`;
     renderRound(message);
@@ -82,19 +83,28 @@ async function handleMessage(message) {
     return;
   }
   if (message.type === "round_active") {
-    if (activeRoundNo === Number(message.round_no || 0) && keywordStartedAt <= 0) {
+    if (activeRoundNo !== Number(message.round_no || 0)) {
+      return;
+    }
+    if (keywordStartedAt <= 0) {
       keywordStartedAt = performance.now();
     }
     inputEnabled = true;
     return;
   }
   if (message.type === "round_result") {
-    inputEnabled = false;
+    if (Number(message.round_no || 0) === activeRoundNo) {
+      inputEnabled = false;
+    }
     showToast(`${message.winner_name} さんが獲得`);
     return;
   }
   if (message.type === "mistake") {
-    if (appState && message.user_id === appState.self_user_id) {
+    if (
+      appState
+      && message.user_id === appState.self_user_id
+      && Number(message.round_no || 0) === activeRoundNo
+    ) {
       inputEnabled = false;
       showToast("せっかちニキ");
     }
@@ -290,6 +300,7 @@ function clickCard(memeId) {
 
 async function playRound(round) {
   if (round.tts_fallback) {
+    await speakText(`第${round.round_no}戦`);
     await sleep(Number(round.wait_ms || 0));
     keywordStartedAt = performance.now();
     send({ type: "keyword_started", round_no: round.round_no });

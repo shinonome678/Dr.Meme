@@ -36,6 +36,7 @@ MAX_ROUNDS = 49
 READING_MAX_LENGTH = 100
 MIDGAME_CARD_COUNT = 25
 ADJUDICATION_SECONDS = 0.75
+BROWSER_TTS_INTRO_SECONDS = 1.2
 
 
 class KarutaError(Exception):
@@ -456,7 +457,7 @@ class KarutaManager:
         round_no: int,
         wait_ms: int,
     ) -> None:
-        await asyncio.sleep(max(0, wait_ms) / 1000)
+        await asyncio.sleep(BROWSER_TTS_INTRO_SECONDS + max(0, wait_ms) / 1000)
         session = self.sessions.get(game_id)
         if session is None:
             return

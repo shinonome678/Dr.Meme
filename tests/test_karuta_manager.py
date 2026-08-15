@@ -4,6 +4,7 @@ import asyncio
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from backends import ImagePayload
 from config import Settings
@@ -181,8 +182,9 @@ class KarutaManagerTest(unittest.IsolatedAsyncioTestCase):
         round1.tts_fallback = True
         session.current_round_index = 0
 
-        await self.manager._start_round(session, round1)
-        await asyncio.sleep(0.01)
+        with patch("karuta.manager.BROWSER_TTS_INTRO_SECONDS", 0):
+            await self.manager._start_round(session, round1)
+            await asyncio.sleep(0.01)
 
         self.assertEqual(session.state, GameState.ROUND_ACTIVE)
         self.assertIsNotNone(round1.active_started_at)
