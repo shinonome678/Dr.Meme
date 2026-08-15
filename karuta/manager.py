@@ -158,8 +158,6 @@ class KarutaManager:
         if len(participants) > MAX_PLAYERS:
             raise ValueError("karuta allows up to ten players")
 
-        await self.ensure_voicevox_available()
-
         async with self.lock:
             if guild_id in self.active_by_guild:
                 raise ActiveGameExistsError
@@ -200,9 +198,7 @@ class KarutaManager:
         if len(candidates) < BOARD_SIZE:
             raise NotEnoughMemesError
 
-        styles = await self.voicevox.available_styles()
-        if not styles:
-            raise VoicevoxUnavailableError
+        styles = [VoiceStyle("ブラウザ", "読み上げ", 0)]
 
         selected = self.random.sample(candidates, BOARD_SIZE)
         board = selected[:]
@@ -237,8 +233,11 @@ class KarutaManager:
             self._cleanup_old_audio(session.audio_root / session.game_id, keep=session.audio_dir)
 
         await self.broadcast_state(session)
-        session.first_audio_task = asyncio.create_task(self._generate_initial_audio(session))
-        LOGGER.info("karuta match prepared: game=%s match=%s", session.game_id, session.match_no)
+        LOGGER.info(
+            "karuta match prepared with browser TTS: game=%s match=%s",
+            session.game_id,
+            session.match_no,
+        )
 
     def _make_round_plan(
         self,
@@ -254,6 +253,8 @@ class KarutaManager:
             reading_text=session.reading_for_meme(meme),
             voice_style=self.random.choice(styles),
             wait_ms=self.random.randint(0, 4000),
+            audio_ready=True,
+            tts_fallback=True,
         )
 
     def _cleanup_old_audio(self, game_dir: Path, *, keep: Path) -> None:
@@ -813,6 +814,8 @@ class KarutaManager:
             "wait_ms": round_plan.wait_ms,
             "voice": round_plan.voice_style.label(),
             "audio_ready": round_plan.audio_ready,
+            "reading_text": round_plan.reading_text,
+            "tts_fallback": round_plan.tts_fallback,
             "state": session.state.value,
         }
         if player is not None:

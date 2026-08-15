@@ -285,6 +285,14 @@ function clickCard(memeId) {
 }
 
 async function playRound(round) {
+  if (round.tts_fallback) {
+    await sleep(Number(round.wait_ms || 0));
+    await speakText(`第${round.round_no}戦`);
+    keywordStartedAt = performance.now();
+    send({ type: "keyword_started", round_no: round.round_no });
+    await speakText(round.reading_text || "");
+    return;
+  }
   if (!round.audio || !round.audio.intro || !round.audio.keyword) {
     showToast("読み上げ音声を準備しています...");
     return;
@@ -304,6 +312,28 @@ async function playRound(round) {
     console.error(error);
     showToast("音声を再生できませんでした");
   }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function speakText(text) {
+  const value = String(text || "").trim();
+  if (!value || !("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {
+    return sleep(350);
+  }
+  return new Promise((resolve) => {
+    const utterance = new SpeechSynthesisUtterance(value);
+    utterance.lang = "ja-JP";
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    utterance.onend = resolve;
+    utterance.onerror = resolve;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+    window.setTimeout(resolve, Math.max(1200, value.length * 450));
+  });
 }
 
 function playToEnd(src) {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import wave
 from pathlib import Path
 from typing import Any
 
@@ -64,22 +65,43 @@ class VoicevoxClient:
         output_dir.mkdir(parents=True, exist_ok=True)
         intro_path = output_dir / f"round_{round_plan.round_no:02d}_intro.wav"
         keyword_path = output_dir / f"round_{round_plan.round_no:02d}_keyword.wav"
+        used_fallback = False
 
         if not intro_path.exists():
-            await self.synthesize(
-                text=f"第{round_plan.round_no}戦",
-                speaker_id=round_plan.voice_style.style_id,
-                output_path=intro_path,
-            )
+            try:
+                await self.synthesize(
+                    text=f"第{round_plan.round_no}戦",
+                    speaker_id=round_plan.voice_style.style_id,
+                    output_path=intro_path,
+                )
+            except VoicevoxError:
+                used_fallback = True
+                LOGGER.exception(
+                    "VOICEVOX intro failed; using browser TTS fallback: round=%s speaker=%s",
+                    round_plan.round_no,
+                    round_plan.voice_style.style_id,
+                )
+                await asyncio.to_thread(write_silence_wav, intro_path)
         if not keyword_path.exists():
-            await self.synthesize(
-                text=round_plan.reading_text,
-                speaker_id=round_plan.voice_style.style_id,
-                output_path=keyword_path,
-            )
+            try:
+                await self.synthesize(
+                    text=round_plan.reading_text,
+                    speaker_id=round_plan.voice_style.style_id,
+                    output_path=keyword_path,
+                )
+            except VoicevoxError:
+                used_fallback = True
+                LOGGER.exception(
+                    "VOICEVOX keyword failed; using browser TTS fallback: round=%s speaker=%s text=%r",
+                    round_plan.round_no,
+                    round_plan.voice_style.style_id,
+                    round_plan.reading_text[:80],
+                )
+                await asyncio.to_thread(write_silence_wav, keyword_path)
 
         round_plan.intro_path = intro_path
         round_plan.keyword_path = keyword_path
+        round_plan.tts_fallback = used_fallback
         round_plan.audio_ready = True
 
     async def synthesize(self, *, text: str, speaker_id: int, output_path: Path) -> None:
@@ -156,3 +178,13 @@ class VoicevoxClient:
                     )
 
         await asyncio.to_thread(output_path.write_bytes, wav)
+
+
+def write_silence_wav(path: Path, *, duration: float = 0.25) -> None:
+    sample_rate = 22050
+    frame_count = int(sample_rate * duration)
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(b"\x00\x00" * frame_count)

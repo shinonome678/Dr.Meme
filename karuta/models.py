@@ -98,6 +98,7 @@ class RoundPlan:
     intro_path: Path | None = None
     keyword_path: Path | None = None
     audio_ready: bool = False
+    tts_fallback: bool = False
     eligible_user_ids: set[int] = field(default_factory=set)
     wrong_user_ids: set[int] = field(default_factory=set)
     correct_submissions: list[ClickSubmission] = field(default_factory=list)
