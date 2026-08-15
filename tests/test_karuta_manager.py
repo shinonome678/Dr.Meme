@@ -151,6 +151,15 @@ class KarutaManagerTest(unittest.IsolatedAsyncioTestCase):
         round_ids = {round_plan.meme_id for round_plan in session.rounds}
         self.assertNotIn(session.unread_meme_id, round_ids)
 
+    async def test_initial_audio_ready_requires_only_first_round(self) -> None:
+        session = await self.create_session()
+        for round_plan in session.rounds:
+            round_plan.audio_ready = False
+
+        self.assertFalse(session.first_five_ready)
+        session.rounds[0].audio_ready = True
+        self.assertTrue(session.first_five_ready)
+
     async def test_penalty_blocks_next_round_only(self) -> None:
         session = await self.create_session()
         player = session.players[10]

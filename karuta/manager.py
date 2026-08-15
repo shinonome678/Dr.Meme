@@ -92,7 +92,7 @@ class KarutaSession:
 
     @property
     def first_five_ready(self) -> bool:
-        return all(round_plan.audio_ready for round_plan in self.rounds[:5])
+        return bool(self.rounds) and self.rounds[0].audio_ready
 
     @property
     def audio_dir(self) -> Path:
