@@ -267,7 +267,7 @@ class KarutaManager:
 
     async def _generate_initial_audio(self, session: KarutaSession) -> None:
         try:
-            await self._generate_audio_range(session, start=1, end=5)
+            await self._generate_audio_range(session, start=1, end=1)
             LOGGER.info("voice generation first buffer ready: game=%s", session.game_id)
             await self.broadcast_state(session)
             await self._maybe_start_game(session)
@@ -277,7 +277,7 @@ class KarutaManager:
 
     async def _generate_background_audio(self, session: KarutaSession) -> None:
         try:
-            await self._generate_audio_range(session, start=6, end=MAX_ROUNDS)
+            await self._generate_audio_range(session, start=2, end=MAX_ROUNDS)
         except Exception:
             LOGGER.exception("background voice generation failed: game=%s", session.game_id)
 
@@ -285,6 +285,13 @@ class KarutaManager:
         for round_plan in session.rounds[start - 1 : end]:
             if round_plan.audio_ready:
                 continue
+            LOGGER.info(
+                "voice generation start: game=%s round=%s style=%s text=%r",
+                session.game_id,
+                round_plan.round_no,
+                round_plan.voice_style.label(),
+                round_plan.reading_text[:80],
+            )
             await self.voicevox.synthesize_round(round_plan, session.audio_dir)
             LOGGER.info(
                 "voice generation complete: game=%s round=%s style=%s",
@@ -395,7 +402,16 @@ class KarutaManager:
             if session.state in {GameState.FINISHED, GameState.DISBANDED}:
                 return
             session.current_round_index = index
-            await self._start_round(session, round_plan)
+            try:
+                await self._start_round(session, round_plan)
+            except Exception:
+                LOGGER.exception(
+                    "voice generation failed during round start: game=%s round=%s",
+                    session.game_id,
+                    round_plan.round_no,
+                )
+                await self.finish_game(session, reason="voice_error")
+                return
             return
 
     async def _start_round(self, session: KarutaSession, round_plan: RoundPlan) -> None:
