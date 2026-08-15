@@ -453,6 +453,12 @@ class KarutaManager:
         if session.state in {GameState.ROUND_INTRO, GameState.ROUND_WAIT}:
             session.state = GameState.ROUND_ACTIVE
             await self.broadcast_event(session, "round_active", self.round_payload(session))
+            LOGGER.info(
+                "round active: game=%s round=%s user=%s",
+                session.game_id,
+                round_plan.round_no,
+                player.user_id,
+            )
 
     async def handle_click(
         self,

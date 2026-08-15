@@ -287,10 +287,10 @@ function clickCard(memeId) {
 async function playRound(round) {
   if (round.tts_fallback) {
     await sleep(Number(round.wait_ms || 0));
-    await speakText(`第${round.round_no}戦`);
     keywordStartedAt = performance.now();
     send({ type: "keyword_started", round_no: round.round_no });
-    await speakText(round.reading_text || "");
+    inputEnabled = true;
+    void speakText(round.reading_text || "");
     return;
   }
   if (!round.audio || !round.audio.intro || !round.audio.keyword) {
