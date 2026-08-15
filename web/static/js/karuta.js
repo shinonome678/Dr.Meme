@@ -99,6 +99,13 @@ async function handleMessage(message) {
     showToast(`${message.winner_name} さんが獲得`);
     return;
   }
+  if (message.type === "round_skipped") {
+    if (Number(message.round_no || 0) === activeRoundNo) {
+      inputEnabled = false;
+    }
+    showToast("流れ札");
+    return;
+  }
   if (message.type === "mistake") {
     if (
       appState

@@ -37,6 +37,7 @@ READING_MAX_LENGTH = 100
 MIDGAME_CARD_COUNT = 25
 ADJUDICATION_SECONDS = 0.75
 BROWSER_TTS_INTRO_SECONDS = 1.2
+ROUND_TIMEOUT_SECONDS = 20.0
 
 
 class KarutaError(Exception):
@@ -85,6 +86,7 @@ class KarutaSession:
     background_audio_task: asyncio.Task[None] | None = None
     round_task: asyncio.Task[None] | None = None
     round_activation_task: asyncio.Task[None] | None = None
+    round_timeout_task: asyncio.Task[None] | None = None
     result_notified: bool = False
 
     @property
@@ -489,6 +491,11 @@ class KarutaManager:
         if session.state in {GameState.ROUND_INTRO, GameState.ROUND_WAIT}:
             session.state = GameState.ROUND_ACTIVE
             round_plan.active_started_at = time.monotonic()
+            if session.round_timeout_task and not session.round_timeout_task.done():
+                session.round_timeout_task.cancel()
+            session.round_timeout_task = asyncio.create_task(
+                self._timeout_round(session.game_id, round_plan.round_no)
+            )
             await self.broadcast_event(session, "round_active", self.round_payload(session))
             LOGGER.info(
                 "round active: game=%s round=%s source=%s",
@@ -573,6 +580,40 @@ class KarutaManager:
             and round_plan.eligible_user_ids.issubset(round_plan.wrong_user_ids)
         ):
             await self.finish_game(session, reason="all_mistake")
+
+    async def _timeout_round(self, game_id: str, round_no: int) -> None:
+        await asyncio.sleep(ROUND_TIMEOUT_SECONDS)
+        session = self.sessions.get(game_id)
+        if session is None:
+            return
+        round_plan = session.current_round
+        if (
+            round_plan is None
+            or round_plan.round_no != round_no
+            or session.state != GameState.ROUND_ACTIVE
+            or round_plan.correct_submissions
+        ):
+            return
+
+        session.state = GameState.ROUND_RESULT
+        await self.broadcast_event(
+            session,
+            "round_skipped",
+            {
+                **self.round_payload(session),
+                "meme_id": round_plan.meme_id,
+                "keyword": session.memes_by_id[round_plan.meme_id].keyword,
+                "reading": round_plan.reading_text,
+            },
+        )
+        LOGGER.info(
+            "karuta round timeout: game=%s round=%s meme=%s",
+            session.game_id,
+            round_no,
+            round_plan.meme_id,
+        )
+        await asyncio.sleep(1.2)
+        await self.advance_round(session)
 
     async def _resolve_after_adjudication(self, session: KarutaSession, round_no: int) -> None:
         await asyncio.sleep(ADJUDICATION_SECONDS)
