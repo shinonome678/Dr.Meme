@@ -82,6 +82,9 @@ async function handleMessage(message) {
     return;
   }
   if (message.type === "round_active") {
+    if (activeRoundNo === Number(message.round_no || 0) && keywordStartedAt <= 0) {
+      keywordStartedAt = performance.now();
+    }
     inputEnabled = true;
     return;
   }
@@ -155,6 +158,7 @@ function renderPlayers() {
     button.disabled = !player.is_self || !["LOBBY", "LOADING", "FINISHED"].includes(appState.state);
     button.addEventListener("click", async () => {
       await unlockAudio();
+      await unlockSpeech();
       send({ type: "ready" });
     });
 
@@ -333,6 +337,23 @@ function speakText(text) {
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(utterance);
     window.setTimeout(resolve, Math.max(1200, value.length * 450));
+  });
+}
+
+function unlockSpeech() {
+  if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const utterance = new SpeechSynthesisUtterance(".");
+    utterance.lang = "ja-JP";
+    utterance.volume = 0.01;
+    utterance.rate = 1.4;
+    utterance.onend = resolve;
+    utterance.onerror = resolve;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+    window.setTimeout(resolve, 300);
   });
 }
 

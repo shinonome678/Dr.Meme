@@ -105,6 +105,7 @@ class RoundPlan:
     winner_user_id: int | None = None
     winner_reaction_ms: float | None = None
     adjudication_started: bool = False
+    active_started_at: float | None = None
 
     def audio_urls(self, *, game_id: str, token: str) -> dict[str, str]:
         if self.intro_path is None or self.keyword_path is None:

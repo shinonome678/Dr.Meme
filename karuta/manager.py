@@ -4,6 +4,7 @@ import asyncio
 import logging
 import random
 import shutil
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -82,6 +83,7 @@ class KarutaSession:
     first_audio_task: asyncio.Task[None] | None = None
     background_audio_task: asyncio.Task[None] | None = None
     round_task: asyncio.Task[None] | None = None
+    round_activation_task: asyncio.Task[None] | None = None
     result_notified: bool = False
 
     @property
@@ -430,6 +432,7 @@ class KarutaManager:
         round_plan.winner_user_id = None
         round_plan.winner_reaction_ms = None
         round_plan.adjudication_started = False
+        round_plan.active_started_at = None
 
         if not round_plan.eligible_user_ids:
             await self.finish_game(session, reason="all_mistake")
@@ -438,6 +441,29 @@ class KarutaManager:
         session.state = GameState.ROUND_INTRO
         await self.broadcast_event(session, "round_started", self.round_payload(session))
         LOGGER.info("round start: game=%s round=%s", session.game_id, round_plan.round_no)
+        if round_plan.tts_fallback:
+            session.round_activation_task = asyncio.create_task(
+                self._activate_browser_tts_round(
+                    session.game_id,
+                    round_plan.round_no,
+                    round_plan.wait_ms,
+                )
+            )
+
+    async def _activate_browser_tts_round(
+        self,
+        game_id: str,
+        round_no: int,
+        wait_ms: int,
+    ) -> None:
+        await asyncio.sleep(max(0, wait_ms) / 1000)
+        session = self.sessions.get(game_id)
+        if session is None:
+            return
+        round_plan = session.current_round
+        if round_plan is None or round_plan.round_no != round_no:
+            return
+        await self._activate_round(session, round_plan, source="server")
 
     async def mark_keyword_started(
         self,
@@ -450,14 +476,24 @@ class KarutaManager:
             return
         if int(data.get("round_no", 0)) != round_plan.round_no:
             return
+        await self._activate_round(session, round_plan, source=f"user:{player.user_id}")
+
+    async def _activate_round(
+        self,
+        session: KarutaSession,
+        round_plan: RoundPlan,
+        *,
+        source: str,
+    ) -> None:
         if session.state in {GameState.ROUND_INTRO, GameState.ROUND_WAIT}:
             session.state = GameState.ROUND_ACTIVE
+            round_plan.active_started_at = time.monotonic()
             await self.broadcast_event(session, "round_active", self.round_payload(session))
             LOGGER.info(
-                "round active: game=%s round=%s user=%s",
+                "round active: game=%s round=%s source=%s",
                 session.game_id,
                 round_plan.round_no,
-                player.user_id,
+                source,
             )
 
     async def handle_click(
@@ -482,6 +518,12 @@ class KarutaManager:
         reaction_ms = float(data.get("reaction_ms", -1))
         if meme_id not in session.remaining_ids:
             return
+        if (
+            round_plan.tts_fallback
+            and round_plan.active_started_at is not None
+            and (reaction_ms < 0 or reaction_ms > 30000)
+        ):
+            reaction_ms = (time.monotonic() - round_plan.active_started_at) * 1000
         if reaction_ms < self.settings.karuta_min_reaction_ms or reaction_ms > 30000:
             return
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import tempfile
 import unittest
 from pathlib import Path
@@ -126,6 +127,7 @@ class KarutaManagerTest(unittest.IsolatedAsyncioTestCase):
                 session.first_audio_task,
                 session.background_audio_task,
                 session.round_task,
+                session.round_activation_task,
             ):
                 if task and not task.done():
                     task.cancel()
@@ -171,6 +173,19 @@ class KarutaManagerTest(unittest.IsolatedAsyncioTestCase):
         await self.manager._maybe_start_game(session)
 
         self.assertEqual(session.state, GameState.COUNTDOWN)
+
+    async def test_browser_tts_round_auto_activates(self) -> None:
+        session = await self.create_session()
+        round1 = session.rounds[0]
+        round1.wait_ms = 0
+        round1.tts_fallback = True
+        session.current_round_index = 0
+
+        await self.manager._start_round(session, round1)
+        await asyncio.sleep(0.01)
+
+        self.assertEqual(session.state, GameState.ROUND_ACTIVE)
+        self.assertIsNotNone(round1.active_started_at)
 
     async def test_penalty_blocks_next_round_only(self) -> None:
         session = await self.create_session()
