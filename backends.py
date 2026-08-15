@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import io
 import logging
+import mimetypes
 import uuid
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import quote
@@ -21,6 +24,13 @@ from image_storage import (
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ImagePayload:
+    data: bytes
+    content_type: str
+    filename: str
 
 
 class BackendError(Exception):
@@ -67,10 +77,26 @@ class MemeBackend(Protocol):
     async def list_memes(self, *, guild_id: int, limit: int, offset: int = 0) -> list[Meme]:
         ...
 
+    async def search_memes(
+        self,
+        *,
+        guild_id: int,
+        query: str,
+        limit: int,
+        offset: int = 0,
+    ) -> list[Meme]:
+        ...
+
     async def count_memes(self, *, guild_id: int) -> int:
         ...
 
+    async def count_search_memes(self, *, guild_id: int, query: str) -> int:
+        ...
+
     async def list_enabled_memes(self, *, guild_id: int) -> list[Meme]:
+        ...
+
+    async def list_karuta_candidates(self, *, guild_id: int) -> list[Meme]:
         ...
 
     async def update_meme(
@@ -92,10 +118,31 @@ class MemeBackend(Protocol):
     ) -> Meme | None:
         ...
 
+    async def update_meme_reading(
+        self,
+        *,
+        guild_id: int,
+        meme_id: int,
+        reading: str | None,
+        updated_by: int,
+    ) -> Meme | None:
+        ...
+
+    async def update_meme_readings(
+        self,
+        *,
+        guild_id: int,
+        changes: dict[int, tuple[str | None, int]],
+    ) -> int:
+        ...
+
     async def increment_trigger_count(self, *, guild_id: int, meme_id: int) -> None:
         ...
 
     async def to_discord_file(self, meme: Meme) -> discord.File:
+        ...
+
+    async def read_meme_image(self, meme: Meme) -> ImagePayload:
         ...
 
 
@@ -166,11 +213,41 @@ class LocalMemeBackend:
     async def list_memes(self, *, guild_id: int, limit: int, offset: int = 0) -> list[Meme]:
         return self.db.list_memes(guild_id=guild_id, limit=limit, offset=offset)
 
+    async def search_memes(
+        self,
+        *,
+        guild_id: int,
+        query: str,
+        limit: int,
+        offset: int = 0,
+    ) -> list[Meme]:
+        if not query.strip():
+            return await self.list_memes(guild_id=guild_id, limit=limit, offset=offset)
+        return self.db.search_memes(
+            guild_id=guild_id,
+            query=query.strip(),
+            limit=limit,
+            offset=offset,
+        )
+
     async def count_memes(self, *, guild_id: int) -> int:
         return self.db.count_memes(guild_id=guild_id)
 
+    async def count_search_memes(self, *, guild_id: int, query: str) -> int:
+        if not query.strip():
+            return await self.count_memes(guild_id=guild_id)
+        return self.db.count_search_memes(guild_id=guild_id, query=query.strip())
+
     async def list_enabled_memes(self, *, guild_id: int) -> list[Meme]:
         return self.db.list_enabled_memes(guild_id=guild_id)
+
+    async def list_karuta_candidates(self, *, guild_id: int) -> list[Meme]:
+        memes = await self.list_enabled_memes(guild_id=guild_id)
+        return [
+            meme
+            for meme in memes
+            if self.storage.path_for(meme.image_path).is_file()
+        ]
 
     async def update_meme(
         self,
@@ -196,6 +273,29 @@ class LocalMemeBackend:
     ) -> Meme | None:
         return self.db.set_enabled(guild_id=guild_id, meme_id=meme_id, enabled=enabled)
 
+    async def update_meme_reading(
+        self,
+        *,
+        guild_id: int,
+        meme_id: int,
+        reading: str | None,
+        updated_by: int,
+    ) -> Meme | None:
+        return self.db.update_meme_reading(
+            guild_id=guild_id,
+            meme_id=meme_id,
+            reading=reading,
+            updated_by=updated_by,
+        )
+
+    async def update_meme_readings(
+        self,
+        *,
+        guild_id: int,
+        changes: dict[int, tuple[str | None, int]],
+    ) -> int:
+        return self.db.update_meme_readings(guild_id=guild_id, changes=changes)
+
     async def increment_trigger_count(self, *, guild_id: int, meme_id: int) -> None:
         self.db.increment_trigger_count(guild_id=guild_id, meme_id=meme_id)
 
@@ -204,6 +304,21 @@ class LocalMemeBackend:
         if not image_path.is_file():
             raise ImageNotFoundError
         return discord.File(image_path, filename=image_path.name)
+
+    async def read_meme_image(self, meme: Meme) -> ImagePayload:
+        image_path = self.storage.path_for(meme.image_path)
+        try:
+            image_path.relative_to(self.storage.images_dir.resolve())
+        except ValueError as exc:
+            raise ImageNotFoundError from exc
+        if not image_path.is_file():
+            raise ImageNotFoundError
+        content_type = mimetypes.guess_type(image_path.name)[0] or "application/octet-stream"
+        return ImagePayload(
+            data=image_path.read_bytes(),
+            content_type=content_type,
+            filename=image_path.name,
+        )
 
 
 class SupabaseRequestError(BackendError):
@@ -318,6 +433,17 @@ class SupabaseMemeBackend:
             created_at=str(row["created_at"]),
             enabled=bool(row["enabled"]),
             trigger_count=int(row["trigger_count"]),
+            reading=str(row["reading"]) if row.get("reading") is not None else None,
+            reading_updated_by=(
+                int(row["reading_updated_by"])
+                if row.get("reading_updated_by") is not None
+                else None
+            ),
+            reading_updated_at=(
+                str(row["reading_updated_at"])
+                if row.get("reading_updated_at") is not None
+                else None
+            ),
         )
 
     async def _upload_attachment(
@@ -466,6 +592,37 @@ class SupabaseMemeBackend:
         )
         return [self._meme_from_row(row) for row in rows]
 
+    async def search_memes(
+        self,
+        *,
+        guild_id: int,
+        query: str,
+        limit: int,
+        offset: int = 0,
+    ) -> list[Meme]:
+        query = query.strip().lower()
+        if not query:
+            return await self.list_memes(guild_id=guild_id, limit=limit, offset=offset)
+
+        rows = await self._request_json(
+            "GET",
+            "/rest/v1/memes",
+            params={
+                "select": "*",
+                "guild_id": f"eq.{guild_id}",
+                "order": "id.asc",
+                "limit": "1000",
+            },
+        )
+        memes = [
+            self._meme_from_row(row)
+            for row in rows
+            if query in str(row.get("keyword", "")).lower()
+            or query in str(row.get("reading", "")).lower()
+            or query == str(row.get("id", ""))
+        ]
+        return memes[offset : offset + limit]
+
     async def count_memes(self, *, guild_id: int) -> int:
         rows = await self._request_json(
             "GET",
@@ -476,6 +633,18 @@ class SupabaseMemeBackend:
             },
         )
         return len(rows)
+
+    async def count_search_memes(self, *, guild_id: int, query: str) -> int:
+        if not query.strip():
+            return await self.count_memes(guild_id=guild_id)
+        return len(
+            await self.search_memes(
+                guild_id=guild_id,
+                query=query,
+                limit=1000,
+                offset=0,
+            )
+        )
 
     async def list_enabled_memes(self, *, guild_id: int) -> list[Meme]:
         rows = await self._request_json(
@@ -489,6 +658,9 @@ class SupabaseMemeBackend:
             },
         )
         return [self._meme_from_row(row) for row in rows]
+
+    async def list_karuta_candidates(self, *, guild_id: int) -> list[Meme]:
+        return await self.list_enabled_memes(guild_id=guild_id)
 
     async def update_meme(
         self,
@@ -542,6 +714,51 @@ class SupabaseMemeBackend:
         )
         return self._meme_from_row(rows[0]) if rows else None
 
+    async def update_meme_reading(
+        self,
+        *,
+        guild_id: int,
+        meme_id: int,
+        reading: str | None,
+        updated_by: int,
+    ) -> Meme | None:
+        normalized_reading = reading.strip() if reading is not None else None
+        if normalized_reading == "":
+            normalized_reading = None
+        rows = await self._request_json(
+            "PATCH",
+            "/rest/v1/memes",
+            params={
+                "select": "*",
+                "guild_id": f"eq.{guild_id}",
+                "id": f"eq.{meme_id}",
+            },
+            json_body={
+                "reading": normalized_reading,
+                "reading_updated_by": updated_by,
+                "reading_updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            headers={"Prefer": "return=representation"},
+        )
+        return self._meme_from_row(rows[0]) if rows else None
+
+    async def update_meme_readings(
+        self,
+        *,
+        guild_id: int,
+        changes: dict[int, tuple[str | None, int]],
+    ) -> int:
+        updated = 0
+        for meme_id, (reading, updated_by) in changes.items():
+            if await self.update_meme_reading(
+                guild_id=guild_id,
+                meme_id=meme_id,
+                reading=reading,
+                updated_by=updated_by,
+            ):
+                updated += 1
+        return updated
+
     async def increment_trigger_count(self, *, guild_id: int, meme_id: int) -> None:
         await self._request_json(
             "POST",
@@ -559,6 +776,15 @@ class SupabaseMemeBackend:
         )
         filename = Path(meme.image_path).name
         return discord.File(io.BytesIO(data), filename=filename)
+
+    async def read_meme_image(self, meme: Meme) -> ImagePayload:
+        data = await self._request_bytes(
+            "GET",
+            f"/storage/v1/object/{self.bucket}/{quote(meme.image_path, safe='/')}",
+        )
+        filename = Path(meme.image_path).name
+        content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        return ImagePayload(data=data, content_type=content_type, filename=filename)
 
 
 def create_backend(settings: Settings) -> MemeBackend:

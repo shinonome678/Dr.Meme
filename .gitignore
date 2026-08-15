@@ -6,3 +6,8 @@ __pycache__/
 data/memes.db
 data/images/*
 !data/images/.gitkeep
+data/karuta_audio/
+data/karuta_preview/
+data/karuta_preview*.txt
+data/karuta_preview*.log
+data/karuta_preview.pid

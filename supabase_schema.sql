@@ -8,8 +8,28 @@ create table if not exists public.memes (
     created_at timestamptz not null default now(),
     enabled boolean not null default true,
     trigger_count bigint not null default 0,
+    reading text,
+    reading_updated_by bigint,
+    reading_updated_at timestamptz,
     unique (guild_id, keyword, match_type)
 );
+
+alter table public.memes
+    add column if not exists reading text;
+
+alter table public.memes
+    add column if not exists reading_updated_by bigint;
+
+alter table public.memes
+    add column if not exists reading_updated_at timestamptz;
+
+alter table public.memes enable row level security;
+
+grant select, insert, update, delete on table public.memes
+    to service_role;
+
+grant usage, select on sequence public.memes_id_seq
+    to service_role;
 
 create index if not exists idx_memes_guild_enabled
     on public.memes (guild_id, enabled);
@@ -23,11 +43,18 @@ create or replace function public.increment_meme_trigger_count(
 )
 returns void
 language sql
+set search_path = ''
 as $$
     update public.memes
     set trigger_count = trigger_count + 1
     where guild_id = p_guild_id and id = p_meme_id;
 $$;
+
+revoke execute on function public.increment_meme_trigger_count(bigint, bigint)
+    from public, anon, authenticated;
+
+grant execute on function public.increment_meme_trigger_count(bigint, bigint)
+    to service_role;
 
 insert into storage.buckets (
     id,
