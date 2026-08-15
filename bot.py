@@ -8,6 +8,8 @@ from discord.ext import commands
 
 from backends import create_backend
 from config import Settings, load_settings
+from karuta.manager import KarutaManager
+from karuta.web import KarutaWebServer
 
 
 class MemeBot(commands.Bot):
@@ -20,12 +22,16 @@ class MemeBot(commands.Bot):
         super().__init__(command_prefix=commands.when_mentioned, intents=intents)
         self.settings = settings
         self.backend = create_backend(settings)
+        self.karuta_manager = KarutaManager(backend=self.backend, settings=settings)
+        self.karuta_web = KarutaWebServer(manager=self.karuta_manager, settings=settings)
 
     async def setup_hook(self) -> None:
         await self.backend.initialize()
+        await self.karuta_web.start()
 
         await self.load_extension("cogs.meme_commands")
         await self.load_extension("cogs.meme_listener")
+        await self.load_extension("cogs.karuta_commands")
 
         if self.settings.test_guild_id is not None:
             guild = discord.Object(id=self.settings.test_guild_id)
@@ -50,6 +56,7 @@ class MemeBot(commands.Bot):
         logging.info("Logged in as %s (ID: %s)", user, user.id)
 
     async def close(self) -> None:
+        await self.karuta_web.stop()
         await self.backend.close()
         await super().close()
 
