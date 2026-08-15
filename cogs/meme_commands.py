@@ -46,14 +46,22 @@ class MemeRegisterModal(discord.ui.Modal):
             required=True,
             max_length=20,
         )
+        self.reading_input = discord.ui.TextInput(
+            label="読み方（空欄ならキーワードと同じ）",
+            placeholder="例: なんかみてる",
+            required=False,
+            max_length=100,
+        )
         self.add_item(self.keyword_input)
         self.add_item(self.match_type_input)
+        self.add_item(self.reading_input)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         await self.cog.register_attachment(
             interaction,
             keyword=str(self.keyword_input.value),
             match_type=str(self.match_type_input.value),
+            reading=str(self.reading_input.value),
             attachment=self.attachment,
         )
 
@@ -123,6 +131,7 @@ class MemeCommands(commands.Cog):
         *,
         keyword: str,
         match_type: str,
+        reading: str | None = None,
         attachment: discord.Attachment,
     ) -> Meme | None:
         guild_id = await self._ensure_guild(interaction)
@@ -157,6 +166,7 @@ class MemeCommands(commands.Cog):
                 match_type=normalized_match_type,
                 attachment=attachment,
                 created_by=interaction.user.id,
+                reading=reading,
             )
         except UnsupportedImageError:
             await interaction.followup.send(
@@ -192,7 +202,8 @@ class MemeCommands(commands.Cog):
             return None
 
         await interaction.followup.send(
-            f"「{meme.keyword}」を登録しました。判定方法: {match_type_label(meme.match_type)}",
+            f"「{meme.keyword}」を登録しました。"
+            f" 判定方法: {match_type_label(meme.match_type)} / 読み方: {meme.voice_text}",
             ephemeral=True,
         )
         return meme
@@ -202,6 +213,7 @@ class MemeCommands(commands.Cog):
         keyword="反応させるキーワード",
         image="返信に使う画像ファイル",
         match_type="部分一致または完全一致",
+        reading="かるたで読み上げる読み方。空欄ならキーワードと同じ",
     )
     @app_commands.choices(
         match_type=[
@@ -215,6 +227,7 @@ class MemeCommands(commands.Cog):
         keyword: str,
         image: discord.Attachment,
         match_type: str,
+        reading: str | None = None,
     ) -> None:
         if not await self._ensure_can_manage(interaction):
             return
@@ -222,6 +235,7 @@ class MemeCommands(commands.Cog):
             interaction,
             keyword=keyword,
             match_type=match_type,
+            reading=reading,
             attachment=image,
         )
 
@@ -308,6 +322,7 @@ class MemeCommands(commands.Cog):
             color=discord.Color.blurple(),
         )
         embed.add_field(name="キーワード", value=meme.keyword, inline=False)
+        embed.add_field(name="読み方", value=meme.voice_text, inline=False)
         embed.add_field(name="判定方法", value=match_type_label(meme.match_type), inline=True)
         embed.add_field(name="状態", value="有効" if meme.enabled else "無効", inline=True)
         embed.add_field(name="発動回数", value=str(meme.trigger_count), inline=True)
@@ -326,6 +341,7 @@ class MemeCommands(commands.Cog):
         meme_id="編集するミームID",
         keyword="新しいキーワード",
         match_type="新しい判定方法",
+        reading="新しい読み方。空欄ならキーワードと同じ",
     )
     @app_commands.choices(
         match_type=[
@@ -339,6 +355,7 @@ class MemeCommands(commands.Cog):
         meme_id: int,
         keyword: str | None = None,
         match_type: str | None = None,
+        reading: str | None = None,
     ) -> None:
         if not await self._ensure_can_manage(interaction):
             return
@@ -348,8 +365,8 @@ class MemeCommands(commands.Cog):
             await send_ephemeral(interaction, "キーワードを空にはできません。")
             return
 
-        if next_keyword is None and match_type is None:
-            await send_ephemeral(interaction, "変更するキーワードまたは判定方法を指定してください。")
+        if next_keyword is None and match_type is None and reading is None:
+            await send_ephemeral(interaction, "変更するキーワード、判定方法、読み方のいずれかを指定してください。")
             return
 
         guild_id = interaction.guild_id
@@ -361,6 +378,8 @@ class MemeCommands(commands.Cog):
                 meme_id=meme_id,
                 keyword=next_keyword,
                 match_type=match_type,
+                reading=reading,
+                updated_by=interaction.user.id,
             )
         except DuplicateMemeError:
             await send_ephemeral(
@@ -376,7 +395,8 @@ class MemeCommands(commands.Cog):
         await send_ephemeral(
             interaction,
             f"ID {updated.id} を更新しました。"
-            f" キーワード: {updated.keyword} / 判定方法: {match_type_label(updated.match_type)}",
+            f" キーワード: {updated.keyword} / 判定方法: {match_type_label(updated.match_type)}"
+            f" / 読み方: {updated.voice_text}",
         )
 
     @meme.command(name="enable", description="指定ミームを有効化します。")

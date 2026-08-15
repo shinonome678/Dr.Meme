@@ -143,9 +143,14 @@ class MemeDatabase:
         match_type: str,
         image_path: str,
         created_by: int,
+        reading: str | None = None,
     ) -> Meme:
         if match_type not in VALID_MATCH_TYPES:
             raise ValueError(f"Unknown match_type: {match_type}")
+
+        normalized_reading = reading.strip() if reading is not None else keyword
+        if not normalized_reading:
+            normalized_reading = keyword
 
         try:
             with self._connect() as conn:
@@ -156,11 +161,22 @@ class MemeDatabase:
                         keyword,
                         match_type,
                         image_path,
-                        created_by
+                        created_by,
+                        reading,
+                        reading_updated_by,
+                        reading_updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
                     """,
-                    (guild_id, keyword, match_type, image_path, created_by),
+                    (
+                        guild_id,
+                        keyword,
+                        match_type,
+                        image_path,
+                        created_by,
+                        normalized_reading,
+                        created_by,
+                    ),
                 )
                 meme_id = int(cursor.lastrowid)
                 row = conn.execute(
@@ -277,6 +293,8 @@ class MemeDatabase:
         meme_id: int,
         keyword: str | None = None,
         match_type: str | None = None,
+        reading: str | None = None,
+        updated_by: int | None = None,
     ) -> Meme | None:
         current = self.get_meme(guild_id=guild_id, meme_id=meme_id)
         if current is None:
@@ -287,16 +305,47 @@ class MemeDatabase:
         if next_match_type not in VALID_MATCH_TYPES:
             raise ValueError(f"Unknown match_type: {next_match_type}")
 
+        should_update_reading = reading is not None
+        next_reading = current.reading
+        if reading is not None:
+            next_reading = reading.strip() or next_keyword
+        elif keyword is not None:
+            current_reading = current.reading.strip() if current.reading else ""
+            if not current_reading or current_reading == current.keyword:
+                next_reading = next_keyword
+                should_update_reading = True
+
         try:
             with self._connect() as conn:
-                conn.execute(
-                    """
-                    UPDATE memes
-                    SET keyword = ?, match_type = ?
-                    WHERE guild_id = ? AND id = ?
-                    """,
-                    (next_keyword, next_match_type, guild_id, meme_id),
-                )
+                if should_update_reading:
+                    conn.execute(
+                        """
+                        UPDATE memes
+                        SET keyword = ?,
+                            match_type = ?,
+                            reading = ?,
+                            reading_updated_by = COALESCE(?, reading_updated_by),
+                            reading_updated_at = datetime('now')
+                        WHERE guild_id = ? AND id = ?
+                        """,
+                        (
+                            next_keyword,
+                            next_match_type,
+                            next_reading,
+                            updated_by,
+                            guild_id,
+                            meme_id,
+                        ),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        UPDATE memes
+                        SET keyword = ?, match_type = ?
+                        WHERE guild_id = ? AND id = ?
+                        """,
+                        (next_keyword, next_match_type, guild_id, meme_id),
+                    )
                 row = conn.execute(
                     "SELECT * FROM memes WHERE guild_id = ? AND id = ?",
                     (guild_id, meme_id),
