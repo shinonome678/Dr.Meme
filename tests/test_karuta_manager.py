@@ -160,6 +160,18 @@ class KarutaManagerTest(unittest.IsolatedAsyncioTestCase):
         session.rounds[0].audio_ready = True
         self.assertTrue(session.first_five_ready)
 
+    async def test_all_ready_starts_without_waiting_for_image_loaded_flags(self) -> None:
+        session = await self.create_session()
+        session.state = GameState.LOBBY
+        session.rounds[0].audio_ready = True
+        for player in session.players.values():
+            player.ready = True
+            player.images_loaded = False
+
+        await self.manager._maybe_start_game(session)
+
+        self.assertEqual(session.state, GameState.COUNTDOWN)
+
     async def test_penalty_blocks_next_round_only(self) -> None:
         session = await self.create_session()
         player = session.players[10]

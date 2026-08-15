@@ -380,9 +380,8 @@ class KarutaManager:
         if session.state not in {GameState.LOBBY, GameState.LOADING}:
             return
         all_ready = all(player.ready for player in session.players.values())
-        all_images_loaded = all(player.images_loaded for player in session.players.values())
-        if not (all_ready and all_images_loaded and session.first_five_ready):
-            if all_ready and all_images_loaded:
+        if not (all_ready and session.first_five_ready):
+            if all_ready:
                 session.state = GameState.LOADING
                 await self.broadcast_state(session)
             return
