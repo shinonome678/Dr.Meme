@@ -211,6 +211,8 @@ class KarutaCommands(commands.Cog):
             await send_ephemeral(interaction, "このサーバーではすでにDr.Memeかるたが進行中です。")
             return
 
+        await interaction.response.defer(thinking=True)
+
         candidate_count = await self.manager.count_candidates(guild_id=interaction.guild_id)
         if candidate_count < 50:
             await send_ephemeral(
@@ -221,7 +223,7 @@ class KarutaCommands(commands.Cog):
 
         view = KarutaRecruitmentView(self, interaction.user)
         view.channel_id = interaction.channel_id or 0
-        await interaction.response.send_message(embed=view.embed(), view=view)
+        await interaction.followup.send(embed=view.embed(), view=view)
 
     async def notify_game_finished(self, session) -> None:
         channel = self.bot.get_channel(session.channel_id)
