@@ -65,6 +65,7 @@ class MemeBackend(Protocol):
         match_type: str,
         attachment: discord.Attachment,
         created_by: int,
+        reading: str | None = None,
     ) -> Meme:
         ...
 
@@ -106,6 +107,8 @@ class MemeBackend(Protocol):
         meme_id: int,
         keyword: str | None = None,
         match_type: str | None = None,
+        reading: str | None = None,
+        updated_by: int | None = None,
     ) -> Meme | None:
         ...
 
@@ -178,6 +181,7 @@ class LocalMemeBackend:
         match_type: str,
         attachment: discord.Attachment,
         created_by: int,
+        reading: str | None = None,
     ) -> Meme:
         if self.db.duplicate_exists(
             guild_id=guild_id,
@@ -195,6 +199,7 @@ class LocalMemeBackend:
                 match_type=match_type,
                 image_path=relative_path,
                 created_by=created_by,
+                reading=reading,
             )
         except Exception:
             if relative_path is not None:
@@ -256,12 +261,16 @@ class LocalMemeBackend:
         meme_id: int,
         keyword: str | None = None,
         match_type: str | None = None,
+        reading: str | None = None,
+        updated_by: int | None = None,
     ) -> Meme | None:
         return self.db.update_meme(
             guild_id=guild_id,
             meme_id=meme_id,
             keyword=keyword,
             match_type=match_type,
+            reading=reading,
+            updated_by=updated_by,
         )
 
     async def set_enabled(
@@ -496,6 +505,7 @@ class SupabaseMemeBackend:
         match_type: str,
         attachment: discord.Attachment,
         created_by: int,
+        reading: str | None = None,
     ) -> Meme:
         if await self.duplicate_exists(
             guild_id=guild_id,
@@ -505,6 +515,9 @@ class SupabaseMemeBackend:
             raise DuplicateMemeError
 
         image_path: str | None = None
+        normalized_reading = reading.strip() if reading is not None else keyword
+        if not normalized_reading:
+            normalized_reading = keyword
         try:
             image_path = await self._upload_attachment(guild_id=guild_id, attachment=attachment)
             rows = await self._request_json(
@@ -517,6 +530,9 @@ class SupabaseMemeBackend:
                     "match_type": validate_match_type(match_type),
                     "image_path": image_path,
                     "created_by": created_by,
+                    "reading": normalized_reading,
+                    "reading_updated_by": created_by,
+                    "reading_updated_at": datetime.now(timezone.utc).isoformat(),
                 },
                 headers={"Prefer": "return=representation"},
             )
@@ -669,12 +685,38 @@ class SupabaseMemeBackend:
         meme_id: int,
         keyword: str | None = None,
         match_type: str | None = None,
+        reading: str | None = None,
+        updated_by: int | None = None,
     ) -> Meme | None:
-        body: dict[str, str] = {}
+        current: Meme | None = None
+        if keyword is not None and reading is None:
+            current = await self.get_meme(guild_id=guild_id, meme_id=meme_id)
+            if current is None:
+                return None
+
+        body: dict[str, str | int | None] = {}
         if keyword is not None:
             body["keyword"] = keyword
         if match_type is not None:
             body["match_type"] = validate_match_type(match_type)
+        if reading is not None:
+            next_keyword = keyword if keyword is not None else (
+                current.keyword if current is not None else None
+            )
+            if next_keyword is None:
+                current = await self.get_meme(guild_id=guild_id, meme_id=meme_id)
+                if current is None:
+                    return None
+                next_keyword = current.keyword
+            body["reading"] = reading.strip() or next_keyword
+            body["reading_updated_by"] = updated_by
+            body["reading_updated_at"] = datetime.now(timezone.utc).isoformat()
+        elif keyword is not None and current is not None:
+            current_reading = current.reading.strip() if current.reading else ""
+            if not current_reading or current_reading == current.keyword:
+                body["reading"] = keyword
+                body["reading_updated_by"] = updated_by
+                body["reading_updated_at"] = datetime.now(timezone.utc).isoformat()
 
         try:
             rows = await self._request_json(
