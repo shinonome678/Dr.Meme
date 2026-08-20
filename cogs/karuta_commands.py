@@ -14,6 +14,7 @@ from karuta.manager import (
     VoicevoxUnavailableError,
 )
 from karuta.models import KarutaParticipant
+from permissions import can_manage_memes, permission_denied_message
 
 
 LOGGER = logging.getLogger(__name__)
@@ -224,6 +225,30 @@ class KarutaCommands(commands.Cog):
         view = KarutaRecruitmentView(self, interaction.user)
         view.channel_id = interaction.channel_id or 0
         await interaction.followup.send(embed=view.embed(), view=view)
+
+    @app_commands.command(name="karuta_stop", description="進行中のDr.Memeかるたを強制終了します。")
+    @app_commands.guild_only()
+    async def karuta_stop(self, interaction: discord.Interaction) -> None:
+        if interaction.guild_id is None or not isinstance(interaction.user, discord.Member):
+            await send_ephemeral(interaction, "Discordサーバー内で実行してください。")
+            return
+        if not can_manage_memes(interaction.user, self.bot.settings):
+            await send_ephemeral(interaction, permission_denied_message(self.bot.settings))
+            return
+
+        game_id = self.manager.active_by_guild.get(interaction.guild_id)
+        if game_id is None:
+            await send_ephemeral(interaction, "このサーバーで進行中のDr.Memeかるたはありません。")
+            return
+
+        session = self.manager.sessions.get(game_id)
+        if session is None:
+            self.manager.active_by_guild.pop(interaction.guild_id, None)
+            await send_ephemeral(interaction, "残っていたかるた進行中フラグを解除しました。")
+            return
+
+        await self.manager.finish_game(session, reason="disbanded")
+        await send_ephemeral(interaction, "進行中のDr.Memeかるたを強制終了しました。")
 
     async def notify_game_finished(self, session) -> None:
         channel = self.bot.get_channel(session.channel_id)
